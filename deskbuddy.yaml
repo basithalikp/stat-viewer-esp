@@ -1,0 +1,61 @@
+esphome:
+  name: desk-buddy-display
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+wifi:
+  ssid: "NARIES-MAHAL-Wifi"
+  password: "94475322"
+
+mqtt:
+  broker: 192.168.1.201  # Your CasaOS Server IP
+  on_message:
+    - topic: deskbuddy/stats
+      then:
+        - lambda: |-
+            // Parse JSON payload and update display buffer
+            DynamicJsonDocument doc(512);
+            deserializeJson(doc, x);
+            id(cpu_temp).publish_state(doc["cpu_temp"]);
+            id(ram_usage).publish_state(doc["ram_usage"]);
+
+sensor:
+  - platform: template
+    id: cpu_temp
+  - platform: template
+    id: ram_usage
+
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  frequency: 400kHz
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_tiny
+    size: 9
+  - file: "gfonts://Roboto"
+    id: font_medium
+    size: 11
+
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    address: 0x3C
+    lambda: |-
+      // --- HEADER BAR ---
+      it.printf(0, 0, id(font_tiny), "CPU: %.0f°C", id(cpu_temp).state);
+      it.printf(64, 0, id(font_tiny), "RAM: %.1fG", id(ram_usage).state);
+      it.line(0, 12, 127, 12);
+
+      // --- BODY ---
+      it.printf(0, 16, id(font_tiny), "IMMICH : IDLE");
+      it.printf(0, 28, id(font_tiny), "JELLY  : 1 STREAM");
+      it.printf(0, 40, id(font_tiny), "DOCKER : ALL HEALTHY");
+
+      // --- FOOTER DIVIDER ---
+      it.line(0, 52, 127, 52);
+      it.printf(0, 54, id(font_tiny), "DESK BUDDY ONLINE");
