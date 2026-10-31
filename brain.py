@@ -15,10 +15,15 @@ MQTT_BROKER = "127.0.0.1"
 MQTT_TOPIC_STATS = "deskbuddy/stats"
 MQTT_TOPIC_EVENT = "deskbuddy/event"
 
-DESKTOP_OLLAMA = "http://192.168.1.150:11434"  # Replace with Desktop IP
-CLOUD_OLLAMA = "http://your-remote-vps:11434"    # Fallback Cloud Ollama
-OLLAMA_MODEL = "llama3.2:1b"
+# Desktop Ollama Setup (Fast local GPU inference)
+DESKTOP_OLLAMA_URL = "http://100.88.100.90:11434"
+DESKTOP_OLLAMA_MODEL = "qwen2.5:3b"
 
+# Cloud Ollama Setup (Remote fallback instance)
+CLOUD_OLLAMA_URL = "http://localhost:11434"
+CLOUD_OLLAMA_MODEL = "beam:cloud"
+
+# Local Voice Engine Paths
 VOSK_MODEL_PATH = "/opt/deskbuddy/vosk-model-small-en-us-0.15"
 PIPER_MODEL = "/opt/deskbuddy/en_US-lessac-medium.onnx"
 
@@ -60,34 +65,42 @@ def get_system_metrics():
         "cpu_temp": cpu_temp,
         "ram_usage": ram_gb,
         "containers": f"{running_count} UP",
-        "jellyfin": "IDLE",     # Wire to Jellyfin API
-        "qbittorrent": "0 DL"   # Wire to qBittorrent API
+        "jellyfin": "IDLE",
+        "qbittorrent": "0 DL"
     }
 
 # --- HYBRID OLLAMA ROUTER ---
 def query_ollama(prompt: str) -> str:
     """Checks Desktop Ollama first; falls back to Cloud Ollama."""
-    target_url = CLOUD_OLLAMA
+    target_url = CLOUD_OLLAMA_URL
+    target_model = CLOUD_OLLAMA_MODEL
+
     try:
-        # Fast 200ms ping to check if desktop is powered on
-        r = requests.get(f"{DESKTOP_OLLAMA}/api/version", timeout=0.2)
+        # 250ms probe to verify desktop is running and reachable
+        r = requests.get(f"{DESKTOP_OLLAMA_URL}/api/version", timeout=0.25)
         if r.status_code == 200:
-            target_url = DESKTOP_OLLAMA
+            target_url = DESKTOP_OLLAMA_URL
+            target_model = DESKTOP_OLLAMA_MODEL
     except Exception:
-        target_url = CLOUD_OLLAMA
+        # Desktop unreachable or turned off; use cloud host
+        target_url = CLOUD_OLLAMA_URL
+        target_model = CLOUD_OLLAMA_MODEL
 
     payload = {
-        "model": OLLAMA_MODEL,
+        "model": target_model,
         "prompt": prompt,
-        "system": "You are a concise desk voice assistant. Reply in max 1-2 brief sentences.",
+        "system": (
+            "You are a voice assistant for a desktop buddy. "
+            "Reply strictly in 1 to 2 spoken sentences without markdown, lists, or asterisks."
+        ),
         "stream": False
     }
 
     try:
-        res = requests.post(f"{target_url}/api/generate", json=payload, timeout=6.0)
-        return res.json().get("response", "I could not reach the intelligence backend.")
+        res = requests.post(f"{target_url}/api/generate", json=payload, timeout=8.0)
+        return res.json().get("response", "I received an empty response from the model.")
     except Exception:
-        return "Both desktop and cloud reasoning backends are offline."
+        return "Both local desktop and cloud inference servers are currently unavailable."
 
 # --- INTENT DISPATCHER ---
 def handle_command(text: str):
@@ -107,12 +120,11 @@ def handle_command(text: str):
         return
 
     if "download" in text or "torrent" in text:
-        # Query your qBittorrent API here
         reply = "You currently have two active downloads at 3.4 megabytes per second."
         speak(reply)
         return
 
-    # Fallback: Unrecognized command routed to Ollama
+    # Fallback: Forward general queries to chosen Ollama model
     answer = query_ollama(text)
     speak(answer)
 
